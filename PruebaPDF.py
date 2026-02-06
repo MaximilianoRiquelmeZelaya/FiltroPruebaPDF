@@ -32,7 +32,6 @@ def extraer_info_pdf(pdf_file):
         for page in reader.pages:
             texto_completo += page.extract_text() + "\n"
         
-        # Regex flexible: Permite espacios entre los dígitos del contenedor
         patron_contenedor = r"([A-Z]{4}(?:\s*\d){6,7}(?:\s*-\s*\d)?)"
         match_contenedor = re.search(patron_contenedor, texto_completo)
         
@@ -133,13 +132,9 @@ if archivo_maestro_upload:
             hoja_seleccionada = st.selectbox("Hoja de Trabajo:", nombres_hojas)
         
         if hoja_seleccionada:
-            # Leer muestra para detectar tipos de datos
             df_sample = excel_file.parse(hoja_seleccionada, header=1, nrows=5)
             cols_reales = df_sample.columns.tolist()
-            
-            # Detectar todas las columnas numéricas reales
             cols_numericas_reales = df_sample.select_dtypes(include=['number']).columns.tolist()
-            
             defaults = [c for c in CAMPOS_SUGERIDOS if c in cols_reales]
             
             with c_conf2:
@@ -150,11 +145,9 @@ if archivo_maestro_upload:
                     default=defaults
                 )
                 
-                # --- CAMBIO APLICADO AQUÍ ---
-                # Lista negra de columnas que NO queremos promediar aunque sean números
+                # Lista negra de columnas que NO queremos promediar
                 columnas_excluidas_promedio = ["Folio", "N° Semana", "Hora", "Cliente", "Fecha Etiqueta", "Motivo Retención", "Verificación de patrones PCC"]
                 
-                # Filtramos: (Seleccionadas) Y (Numéricas) Y (NO están en la lista negra)
                 opciones_validas_promedio = [
                     c for c in cols_seleccionadas_excel 
                     if c in cols_numericas_reales and c not in columnas_excluidas_promedio
@@ -243,21 +236,53 @@ if boton_procesar:
                         df_final = df_exportar.reindex(columns=lista_columnas_final)
                         
                         st.subheader("📋 Vista Previa")
-                        st.dataframe(df_final)
+                        st.dataframe(df_final, hide_index=True)
 
-                        # --- SECCIÓN DE PROMEDIOS ---
+                        # --- CÁLCULO DE PROMEDIOS ---
                         st.subheader("📈 Promedios")
                         if cols_para_promediar:
                             df_proms = df_final[cols_para_promediar].apply(pd.to_numeric, errors='coerce')
                             proms = df_proms.mean().dropna()
                             
                             if not proms.empty:
-                                st.dataframe(proms.to_frame("Promedio").round(2).T)
+                                st.dataframe(proms.to_frame("Promedio").round(2).T, hide_index=True)
                             else:
                                 st.warning("No se pudieron calcular promedios (datos vacíos).")
                         else:
-                            st.info("No seleccionaste columnas para promediar.")
+                            st.info("No se seleccionaron columnas para promediar.")
+
+                        # --- NUEVO: RESUMEN DE SACOS POR FECHA ---
+                        st.subheader("📅 Resumen Diario de Sacos")
+                        st.info("Formato fecha = año-mes-dia")
                         
+                        col_fecha_etiqueta = "Fecha Etiqueta"
+                        col_cantidad_sacos = "Cantidad sacos/maxisaco"
+                        
+                        # Verificamos si las columnas existen en el reporte final
+                        if col_fecha_etiqueta in df_final.columns and col_cantidad_sacos in df_final.columns:
+                            try:
+                                # Trabajamos sobre una copia para no alterar el reporte principal
+                                df_resumen = df_final.copy()
+                                
+                                # Asegurar que la cantidad es numérica
+                                df_resumen[col_cantidad_sacos] = pd.to_numeric(df_resumen[col_cantidad_sacos], errors='coerce').fillna(0)
+                                
+                                # Normalizar fecha (quitar hora si existe) para agrupar mejor
+                                if pd.api.types.is_datetime64_any_dtype(df_resumen[col_fecha_etiqueta]):
+                                    df_resumen[col_fecha_etiqueta] = df_resumen[col_fecha_etiqueta].dt.date
+                                
+                                # Agrupar y sumar
+                                tabla_agrupada = df_resumen.groupby(col_fecha_etiqueta)[[col_cantidad_sacos]].sum().reset_index()
+                                tabla_agrupada.rename(columns={col_cantidad_sacos: "Total Sacos"}, inplace=True)
+                                
+                                st.dataframe(tabla_agrupada, use_container_width=True, hide_index=True)
+                                
+                            except Exception as e:
+                                st.error(f"Error calculando resumen de sacos: {e}")
+                        else:
+                            st.info(f"⚠️ Para ver este resumen, asegúrate de incluir las columnas '{col_fecha_etiqueta}' y '{col_cantidad_sacos}' en el selector de columnas principal (Paso 1).")
+
+                        # --- EXPORTAR EXCEL ---
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             df_final.to_excel(writer, index=False, sheet_name='Reporte')
