@@ -6,7 +6,7 @@ import io
 import PyPDF2
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Filtro de Pallets PDF", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Filtro de Pallets", page_icon="📊", layout="wide")
 
 # --- LISTA DE CAMPOS PREFERIDOS ---
 CAMPOS_SUGERIDOS = [
@@ -71,7 +71,7 @@ def detectar_patron_inteligente(texto_sucio):
     return patron_generado, len(candidatos_sanos), comun_prefix, comun_suffix
 
 # --- INTERFAZ DE USUARIO ---
-st.title("📊 Generador de Reportes)")
+st.title("📊 Generador de Reportes")
 st.markdown("Sube el archivo Excel maestro y el registro de transporte de carga(en pdf) para cruzar la información.")
 
 # 1. CARGA DE ARCHIVOS
