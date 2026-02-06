@@ -8,7 +8,7 @@ import PyPDF2
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Filtro de Pallets", page_icon="📊", layout="wide")
 
-# --- LISTA DE CAMPOS PREFERIDOS ---
+# --- LISTA DE CAMPOS ---
 CAMPOS_SUGERIDOS = [
     "Folio", "N° Semana", "Fecha Análisis", "Fecha Etiqueta", "Analista", 
     "Turno", "Lote", "Cliente", "Tipo de producto", "Condición GF/convencional", 
@@ -32,17 +32,12 @@ def extraer_info_pdf(pdf_file):
         for page in reader.pages:
             texto_completo += page.extract_text() + "\n"
         
-        # CAMBIO: Regex flexible que permite espacios entre los números del contenedor
-        # [A-Z]{4}       -> 4 letras iniciales
-        # (?:\s*\d){6,7} -> 6 o 7 dígitos, permitiendo espacios opcionales (\s*) entre ellos
-        # (?:\s*-\s*\d)? -> Guion y dígito final opcionales
+        # Regex flexible: Permite espacios entre los dígitos del contenedor
         patron_contenedor = r"([A-Z]{4}(?:\s*\d){6,7}(?:\s*-\s*\d)?)"
-        
         match_contenedor = re.search(patron_contenedor, texto_completo)
         
         contenedor_encontrado = ""
         if match_contenedor:
-            # Limpiamos los espacios para normalizar el resultado (ej: "MSDU 123" -> "MSDU123")
             contenedor_encontrado = match_contenedor.group(1).replace(" ", "").replace("\n", "")
             
         return contenedor_encontrado, texto_completo
@@ -55,31 +50,28 @@ def detectar_patron_inteligente(texto_sucio):
     candidatos_sanos = re.findall(r'\b\d{10,14}\b', texto_sin_fechas)
     if not candidatos_sanos: return "", 0, "", ""
     
-    # 1. Detectar prefijo y sufijo comunes
     prefijos = [c[:4] for c in candidatos_sanos]
     sufijos = [c[-2:] for c in candidatos_sanos]
     comun_prefix = Counter(prefijos).most_common(1)[0][0]
     comun_suffix = Counter(sufijos).most_common(1)[0][0]
     
-    # 2. Generar Patrón ROBUSTO
-    # Agregamos \b al final. Esto obliga a que el sufijo sea realmente el final del número.
-    # Ejemplo: Si el número es ...4052626
-    # Sin \b: Se detiene en el primer 26 -> Captura ...40526 (Error)
-    # Con \b: Se detiene solo en el último 26 -> Captura ...4052626 (Correcto)
     patron_generado = rf"({comun_prefix}[\d\s]+?{comun_suffix})\b"
-    
     return patron_generado, len(candidatos_sanos), comun_prefix, comun_suffix
 
 # --- INTERFAZ DE USUARIO ---
-st.title("📊 Generador de Reportes")
-st.markdown("Sube el archivo Excel maestro y el registro de transporte de carga(en pdf) para cruzar la información.")
+st.title("📊 Generador de Reportes de Hojuela (Vía PDF)")
+st.markdown("Sube tanto el archivo Excel maestro como el PDF de transporte para cruzar la información.")
 
 # 1. CARGA DE ARCHIVOS
 col1, col2 = st.columns(2)
+
 with col1:
-    archivo_maestro = st.file_uploader("1️⃣ Cargar Excel Maestro", type=["xlsx", "xlsm","xlsb","xls","xlt","xltx","xltm","csv"])
+    st.info("📂 **Archivo Excel Maestro**")
+    archivo_maestro_upload = st.file_uploader("Sube el Excel (.xlsx) aquí", type=["xlsx"])
+
 with col2:
-    archivo_pdf = st.file_uploader("2️⃣ Cargar PDF de registro de transporte de carga", type=["pdf"])
+    st.info("📄 **Documento de Transporte**")
+    archivo_pdf_upload = st.file_uploader("Sube el PDF aquí", type=["pdf"])
 
 # 2. PROCESAMIENTO INICIAL
 contenedor_final = ""
@@ -87,12 +79,13 @@ patron_final = ""
 texto_pdf_final = ""
 hoja_seleccionada = None
 cols_seleccionadas_excel = []
+cols_para_promediar = []
 prefijo_auto = ""
 sufijo_auto = ""
 
-if archivo_pdf:
+if archivo_pdf_upload:
     with st.spinner('Analizando PDF...'):
-        cont_detectado, texto_pdf = extraer_info_pdf(archivo_pdf)
+        cont_detectado, texto_pdf = extraer_info_pdf(archivo_pdf_upload)
         patron_detectado, num_candidatos, pref_det, suf_det = detectar_patron_inteligente(texto_pdf)
         
         prefijo_auto = pref_det
@@ -104,8 +97,8 @@ if archivo_pdf:
     st.divider()
     st.subheader("🛠️ Validación y Edición Manual")
     
-    c_val1, c_val2, c_val3 = st.columns(3)
-    file_id = archivo_pdf.name 
+    c_val1, c_val2 = st.columns(2)
+    file_id = archivo_pdf_upload.name 
     
     with c_val1:
         contenedor_final = st.text_input("📦 Contenedor Identificado:", value=cont_detectado, key=f"cont_{file_id}")
@@ -118,18 +111,19 @@ if archivo_pdf:
             help="El \\b al final es importante para no cortar números antes de tiempo."
         )
 
-    with c_val3:
-        # Campos para definir cuánto cortar, editables por el usuario
+    c_rec1, c_rec2 = st.columns(2)
+    with c_rec1:
         prefijo_final = st.text_input("✂️ Prefijo (se borrará):", value=prefijo_auto, key=f"pref_{file_id}")
+    with c_rec2:
         sufijo_final = st.text_input("✂️ Sufijo (se borrará):", value=sufijo_auto, key=f"suf_{file_id}")
 
     with st.expander("📝 Ver/Editar Texto del PDF (Opcional)"):
         texto_pdf_final = st.text_area("Contenido extraído:", value=texto_pdf, height=150, key=f"txt_{file_id}")
 
 # 3. CONFIGURACIÓN DE EXCEL
-if archivo_maestro:
+if archivo_maestro_upload:
     try:
-        excel_file = pd.ExcelFile(archivo_maestro)
+        excel_file = pd.ExcelFile(archivo_maestro_upload)
         nombres_hojas = excel_file.sheet_names
         
         st.subheader("⚙️ Configuración del Excel")
@@ -139,57 +133,72 @@ if archivo_maestro:
             hoja_seleccionada = st.selectbox("Hoja de Trabajo:", nombres_hojas)
         
         if hoja_seleccionada:
-            df_cols = pd.read_excel(archivo_maestro, sheet_name=hoja_seleccionada, header=1, nrows=0)
-            cols_reales = df_cols.columns.tolist()
+            # Leer muestra para detectar tipos de datos
+            df_sample = excel_file.parse(hoja_seleccionada, header=1, nrows=5)
+            cols_reales = df_sample.columns.tolist()
+            
+            # Detectar todas las columnas numéricas reales
+            cols_numericas_reales = df_sample.select_dtypes(include=['number']).columns.tolist()
+            
             defaults = [c for c in CAMPOS_SUGERIDOS if c in cols_reales]
             
             with c_conf2:
+                # Selector 1: Columnas generales
                 cols_seleccionadas_excel = st.multiselect(
-                    "Columnas del Excel a incluir:", 
+                    "1️⃣ Columnas a incluir en el Reporte:", 
                     options=cols_reales, 
                     default=defaults
                 )
+                
+                # --- CAMBIO APLICADO AQUÍ ---
+                # Lista negra de columnas que NO queremos promediar aunque sean números
+                columnas_excluidas_promedio = ["Folio", "N° Semana", "Hora", "Cliente", "Fecha Etiqueta", "Motivo Retención", "Verificación de patrones PCC"]
+                
+                # Filtramos: (Seleccionadas) Y (Numéricas) Y (NO están en la lista negra)
+                opciones_validas_promedio = [
+                    c for c in cols_seleccionadas_excel 
+                    if c in cols_numericas_reales and c not in columnas_excluidas_promedio
+                ]
+                
+                # Selector 2: Promedios
+                cols_para_promediar = st.multiselect(
+                    "2️⃣ Columnas para calcular Promedios (Solo numéricas):", 
+                    options=opciones_validas_promedio, 
+                    default=opciones_validas_promedio, 
+                    help="Se excluyeron automáticamente 'Folio' y 'N° Semana'."
+                )
+
     except Exception as e:
-        st.error(f"Error Excel: {e}")
+        st.error(f"Error al leer el Excel cargado: {e}")
 
 # --- BOTÓN DE PROCESAR FINAL ---
 st.divider()
-boton_procesar = st.button("🚀 Procesar", type="primary", disabled=(not archivo_pdf or not archivo_maestro))
+boton_procesar = st.button("🚀 Procesar", type="primary", disabled=(not archivo_pdf_upload or not archivo_maestro_upload))
 
 if boton_procesar:
     if not contenedor_final or not patron_final or not cols_seleccionadas_excel:
         st.error("⚠️ Faltan datos (Contenedor, Patrón o Columnas). Revísalos arriba.")
     else:
         try:
-            # 1. Leer Excel
+            # 1. Leer Excel (Completo)
             with st.spinner(f'Leyendo datos de "{hoja_seleccionada}"...'):
-                df_hojuelaavena = pd.read_excel(archivo_maestro, sheet_name=hoja_seleccionada, header=1)
+                df_hojuelaavena = pd.read_excel(archivo_maestro_upload, sheet_name=hoja_seleccionada, header=1)
                 
                 col_folio_nombre = next((c for c in df_hojuelaavena.columns if str(c).lower().strip() == "folio"), None)
                 if col_folio_nombre:
                     df_hojuelaavena[col_folio_nombre] = pd.to_numeric(df_hojuelaavena[col_folio_nombre], errors='coerce')
             
             # 2. Extracción y Recorte
-            # findall con el nuevo regex traerá los números COMPLETOS correctamente
             hallazgos_crudos = re.findall(patron_final, texto_pdf_final)
-            
-            # Limpiar espacios
             lista_strings_limpios = [x.replace(" ", "").replace("\n", "") for x in hallazgos_crudos]
-            
             lista_folios_a_buscar = []
             
-            # Longitudes a recortar (basadas en lo que diga el usuario en los inputs)
             len_p = len(prefijo_final)
             len_s = len(sufijo_final)
             
             for s in lista_strings_limpios:
-                # Validar que el string sea lo suficientemente largo para recortar
                 if len(s) > (len_p + len_s):
-                    # Recorte estricto por posición
-                    # Si s="03024052626", len_p=4 ("0302"), len_s=2 ("26")
-                    # s[4 : -2]  => "40526" (CORRECTO)
                     folio_recortado_str = s[len_p : -len_s] if len_s > 0 else s[len_p:]
-                    
                     if folio_recortado_str.isdigit():
                         lista_folios_a_buscar.append(int(folio_recortado_str))
             
@@ -209,7 +218,6 @@ if boton_procesar:
                     st.error(f"❌ La hoja '{hoja_seleccionada}' no tiene columna 'Folio'.")
                 else:
                     for idx, folio_buscado in enumerate(lista_folios_a_buscar):
-                        # Búsqueda EXACTA del folio ya recortado
                         fila_match = df_hojuelaavena[df_hojuelaavena[col_folio_nombre] == folio_buscado]
                         
                         if not fila_match.empty:
@@ -237,14 +245,18 @@ if boton_procesar:
                         st.subheader("📋 Vista Previa")
                         st.dataframe(df_final)
 
+                        # --- SECCIÓN DE PROMEDIOS ---
                         st.subheader("📈 Promedios")
-                        df_num = df_final.select_dtypes(include=['float64', 'int64'])
-                        keywords = ["Humedad", "Espesor", "Peso", "FT"] 
-                        cols_prom = [c for c in df_num.columns if any(k in c for k in keywords)]
-                        if cols_prom:
-                            proms = df_final[cols_prom].mean(numeric_only=True).dropna()
+                        if cols_para_promediar:
+                            df_proms = df_final[cols_para_promediar].apply(pd.to_numeric, errors='coerce')
+                            proms = df_proms.mean().dropna()
+                            
                             if not proms.empty:
                                 st.dataframe(proms.to_frame("Promedio").round(2).T)
+                            else:
+                                st.warning("No se pudieron calcular promedios (datos vacíos).")
+                        else:
+                            st.info("No seleccionaste columnas para promediar.")
                         
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
