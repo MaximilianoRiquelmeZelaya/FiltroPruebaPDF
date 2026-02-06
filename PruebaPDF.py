@@ -59,8 +59,8 @@ def detectar_patron_inteligente(texto_sucio):
     return patron_generado, len(candidatos_sanos), comun_prefix, comun_suffix
 
 # --- INTERFAZ DE USUARIO ---
-st.title("📊 Generador de Reportes de Hojuela (Vía PDF)")
-st.markdown("Sube tanto el archivo Excel maestro como el PDF de transporte para cruzar la información.")
+st.title("📊 Generador de Reportes")
+st.markdown("Sube tanto el archivo Excel maestro como el Registro de Transporte de Carga para cruzar la información.")
 
 # 1. CARGA DE ARCHIVOS
 col1, col2 = st.columns(2)
@@ -70,7 +70,7 @@ with col1:
     archivo_maestro_upload = st.file_uploader("Sube el Excel (.xlsx) aquí", type=["xlsx"])
 
 with col2:
-    st.info("📄 **Documento de Transporte**")
+    st.info("📄 **Registro de Transporte de Carga**")
     archivo_pdf_upload = st.file_uploader("Sube el PDF aquí", type=["pdf"])
 
 # 2. PROCESAMIENTO INICIAL
