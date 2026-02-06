@@ -51,4 +51,115 @@ def detectar_patron_inteligente(texto_sucio):
     comun_prefix = Counter(prefijos).most_common(1)[0][0]
     comun_suffix = Counter(sufijos).most_common(1)[0][0]
 
-    patron_generado = rf"{comun_prefix
+    patron_generado = rf"{comun_prefix}(\d+?){comun_suffix}"
+    
+    return patron_generado, len(candidatos)
+
+# --- INTERFAZ DE USUARIO ---
+st.title("📊 Generador de Reportes de Hojuela (Vía PDF)")
+st.markdown("Sube el archivo Excel maestro y el PDF de transporte para cruzar la información.")
+
+# 1. Subir Archivos
+col1, col2 = st.columns(2)
+with col1:
+    archivo_maestro = st.file_uploader("1️⃣ Cargar Excel Maestro ('Control de producto...')", type=["xlsx"])
+with col2:
+    archivo_pdf = st.file_uploader("2️⃣ Cargar PDF de Transporte", type=["pdf"])
+
+# --- BOTÓN DE PROCESAR ---
+if st.button("🚀 Procesar y Generar Excel"):
+    if not archivo_maestro:
+        st.error("⚠️ Falta el archivo Excel maestro.")
+    elif not archivo_pdf:
+        st.error("⚠️ Falta el archivo PDF de transporte.")
+    else:
+        try:
+            # A) Leer PDF y extraer datos
+            with st.spinner('Extrayendo información del PDF...'):
+                contenedor, pallets_texto = extraer_info_pdf(archivo_pdf)
+            
+            if not contenedor:
+                st.warning("⚠️ No se encontró un número de contenedor válido en el PDF. Se usará 'DESCONOCIDO'.")
+                contenedor = "DESCONOCIDO"
+            else:
+                st.info(f"📦 Contenedor detectado: **{contenedor}**")
+
+            # B) Leer Excel Maestro
+            with st.spinner('Leyendo base de datos maestra...'):
+                df_hojuelaavena = pd.read_excel(archivo_maestro, sheet_name="HOJUELA", header=1)
+            
+            # C) Detectar Patrón de Pallets
+            patron, num_candidatos = detectar_patron_inteligente(pallets_texto)
+            
+            if patron:
+                st.success(f"✅ Patrón detectado en {num_candidatos} pallets (Regex: `{patron}`)")
+                
+                lista_limpia = re.findall(patron, pallets_texto)
+                lista_int = [int(x) for x in lista_limpia]
+                lista_int.sort()
+                
+                filas_encontradas = []
+                coincidencias = 0
+                
+                # Barra de progreso
+                barra = st.progress(0)
+                total_items = len(lista_int)
+
+                for idx, folio_buscado in enumerate(lista_int):
+                    fila_match = df_hojuelaavena[df_hojuelaavena["Folio"] == folio_buscado]
+                    
+                    if not fila_match.empty:
+                        coincidencias += 1
+                        datos_fila = fila_match.iloc[0].to_dict()
+                        datos_fila["Contenedor - Folio"] = f"{contenedor} - {folio_buscado}"
+                        filas_encontradas.append(datos_fila)
+                    
+                    barra.progress((idx + 1) / total_items)
+                
+                st.write(f"**Resultados:** {coincidencias} coincidencias de {total_items} códigos buscados.")
+
+                # Generar DataFrame final
+                if filas_encontradas:
+                    df_exportar = pd.DataFrame(filas_encontradas)
+                    df_final = df_exportar.reindex(columns=campos)
+                    
+                    # --- CAMBIO PRINCIPAL AQUÍ ---
+                    st.subheader("📋 Vista Previa Completa de Datos")
+                    st.dataframe(df_final) # Se quitó .head() para mostrar todo
+                    # -----------------------------
+                    
+                    # Preparar Excel en memoria
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_final.to_excel(writer, index=False, sheet_name='Reporte')
+                        worksheet = writer.sheets['Reporte']
+                        
+                        # Formatos (Filtros, Inmovilizar, Ancho)
+                        worksheet.auto_filter.ref = worksheet.dimensions
+                        worksheet.freeze_panes = 'B2'
+                        for column in worksheet.columns:
+                            max_length = 0
+                            column_letter = column[0].column_letter
+                            for cell in column:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except: pass
+                            adjusted_width = (max_length + 2)
+                            worksheet.column_dimensions[column_letter].width = adjusted_width
+                    
+                    excel_data = output.getvalue()
+                    
+                    st.download_button(
+                        label="📥 Descargar Reporte Excel",
+                        data=excel_data,
+                        file_name=f"Reporte_Contenedor_{contenedor}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No se encontraron coincidencias en el Excel maestro para los pallets del PDF.")
+            else:
+                st.error("No se pudieron detectar pallets válidos en el PDF.")
+                
+        except Exception as e:
+            st.error(f"Ocurrió un error: {e}")
