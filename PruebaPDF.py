@@ -61,6 +61,15 @@ def detectar_patron_inteligente(texto_sucio):
     patron_generado = rf"({comun_prefix}[\d\s]+?{comun_suffix})\b"
     return patron_generado, len(candidatos_sanos), comun_prefix, comun_suffix
 
+def extraer_total_pdf(texto):
+    """Busca el total cargado declarado al final del PDF"""
+    if not texto: return 0
+    # Busca "Total Cargados" seguido de espacios/saltos de linea y un número
+    match = re.search(r"Total\s+Cargados[\s\n]*(\d+)", texto, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return 0
+
 # --- INTERFAZ DE USUARIO ---
 st.title("📊 Generador de Reportes")
 st.markdown("Sube tanto el archivo Excel maestro como el Registro de Transporte de Carga para cruzar la información.")
@@ -85,11 +94,13 @@ cols_seleccionadas_excel = []
 cols_para_promediar = []
 prefijo_auto = ""
 sufijo_auto = ""
+total_declarado_pdf = 0
 
 if archivo_pdf_upload:
     with st.spinner('Analizando PDF...'):
         cont_detectado, texto_pdf = extraer_info_pdf(archivo_pdf_upload)
         patron_detectado, num_candidatos, pref_det, suf_det = detectar_patron_inteligente(texto_pdf)
+        total_declarado_pdf = extraer_total_pdf(texto_pdf)
         
         prefijo_auto = pref_det
         sufijo_auto = suf_det
@@ -317,6 +328,17 @@ if boton_procesar:
                                         col_fecha_etiqueta: st.column_config.Column(pinned=True)
                                     }
                                 )
+
+                                # --- NUEVA VERIFICACIÓN DE TOTALES ---
+                                st.divider()
+                                st.markdown("**🔎 Verificación de Carga**")
+                                if total_declarado_pdf > 0:
+                                    if total_global_sacos == total_declarado_pdf:
+                                        st.success(f"✅ Los totales coinciden: {total_global_sacos} sacos detectados vs {total_declarado_pdf} declarados en el PDF.")
+                                    else:
+                                        st.error(f"❌ Discrepancia detectada: Se encontraron {total_global_sacos} sacos, pero el PDF declara un total de {total_declarado_pdf}.")
+                                else:
+                                    st.warning("⚠️ No se pudo leer el 'Total Cargados' del PDF para verificar.")
                                 
                             except Exception as e:
                                 st.error(f"Error calculando resumen de sacos: {e}")
